@@ -1,0 +1,139 @@
+"""LLM API 客户端，基于 OpenAI SDK 兼容多家服务商。"""
+
+import json
+import time
+import logging
+from openai import OpenAI
+
+logger = logging.getLogger(__name__)
+
+# 预置服务商配置
+PRESET_PROVIDERS = {
+    "OpenAI": {
+        "base_url": "https://api.openai.com/v1",
+        "default_model": "gpt-4o",
+    },
+    "DeepSeek": {
+        "base_url": "https://api.deepseek.com/v1",
+        "default_model": "deepseek-chat",
+    },
+    "通义千问": {
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "default_model": "qwen-plus",
+    },
+    "Moonshot (Kimi)": {
+        "base_url": "https://api.moonshot.cn/v1",
+        "default_model": "moonshot-v1-8k",
+    },
+    "智谱 (GLM)": {
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "default_model": "glm-4",
+    },
+    "自定义": {
+        "base_url": "",
+        "default_model": "",
+    },
+}
+
+
+class LLMClient:
+    """LLM API 客户端，支持 OpenAI 兼容接口。"""
+
+    def __init__(self, base_url, api_key, model, timeout=60, max_retries=3):
+        self.model = model
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.client = OpenAI(
+            base_url=base_url,
+            api_key=api_key,
+            timeout=timeout,
+        )
+
+    def call(self, system_prompt, user_prompt):
+        """调用 LLM API，返回解析后的 JSON 结果。
+
+        Args:
+            system_prompt: 系统提示词
+            user_prompt: 用户提示词
+
+        Returns:
+            dict: 解析后的结果，包含 score, issues, suggestion, summary
+            如果解析失败则返回原始文本的包装结果
+
+        Raises:
+            Exception: API 调用失败且重试耗尽时抛出
+        """
+        last_error = None
+
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                logger.info(f"API调用 (第{attempt}次尝试)")
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.3,
+                )
+                content = response.choices[0].message.content.strip()
+                return self._parse_response(content)
+
+            except Exception as e:
+                last_error = e
+                logger.warning(f"API调用失败 (第{attempt}次): {e}")
+                if attempt < self.max_retries:
+                    wait = 2 ** attempt
+                    logger.info(f"等待 {wait} 秒后重试...")
+                    time.sleep(wait)
+
+        raise Exception(f"API调用失败，已重试{self.max_retries}次: {last_error}")
+
+    def _parse_response(self, content):
+        """解析 LLM 返回的 JSON 内容。"""
+        # 尝试提取 JSON 块（有些模型会用 ```json 包裹）
+        if "```json" in content:
+            start = content.index("```json") + 7
+            end = content.index("```", start)
+            content = content[start:end].strip()
+        elif "```" in content:
+            start = content.index("```") + 3
+            end = content.index("```", start)
+            content = content[start:end].strip()
+
+        try:
+            result = json.loads(content)
+            # 验证必需字段
+            required = {"score", "issues", "suggestion", "summary"}
+            if required.issubset(result.keys()):
+                result["score"] = int(result["score"])
+                if not isinstance(result["issues"], list):
+                    result["issues"] = [str(result["issues"])]
+                return result
+        except (json.JSONDecodeError, ValueError, KeyError):
+            pass
+
+        # 解析失败，返回包装结果
+        logger.warning("JSON解析失败，返回原始文本")
+        return {
+            "score": 0,
+            "issues": ["返回格式异常，无法解析"],
+            "suggestion": content,
+            "summary": "模型返回格式异常，请查看建议列中的原始输出",
+        }
+
+    def test_connection(self):
+        """测试 API 连接是否正常。
+
+        Returns:
+            tuple: (成功: bool, 消息: str)
+        """
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": "Hi, respond with 'OK'"}],
+                max_tokens=10,
+            )
+            return True, f"连接成功，模型: {self.model}"
+        except Exception as e:
+            return False, f"连接失败: {e}"

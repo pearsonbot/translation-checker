@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.spec.bak
+checkpoints/
+translation_checker.log
+.env
+*.egg-info/
+.venv/
+test_data.xlsx

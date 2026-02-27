@@ -1,0 +1,78 @@
+# -*- mode: python ; coding: utf-8 -*-
+"""PyInstaller 打包配置 - 翻译校验工具"""
+
+import os
+import customtkinter
+
+# CustomTkinter 资源路径
+ctk_path = os.path.dirname(customtkinter.__file__)
+
+a = Analysis(
+    ['main.py'],
+    pathex=[],
+    binaries=[],
+    datas=[
+        # config.json 不打包，首次运行时由程序自动在 exe 目录生成
+        (ctk_path, 'customtkinter/'),
+    ],
+    hiddenimports=[
+        'customtkinter',
+        'darkdetect',
+        'openpyxl',
+        'et_xmlfile',
+        'openai',
+        'httpx',
+        'httpx._transports',
+        'httpx._transports.default',
+        'httpcore',
+        'certifi',
+        'anyio',
+        'anyio._backends',
+        'anyio._backends._asyncio',
+        'sniffio',
+        'h11',
+        'pydantic',
+        'pydantic_core',
+        'jiter',
+        'distro',
+        'typing_extensions',
+        'typing_inspection',
+        'annotated_types',
+    ],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+)
+
+pyz = PYZ(a.pure, a.zipped_data)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name='TranslationChecker',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=False,  # 无控制台窗口
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='TranslationChecker',
+)
