@@ -313,9 +313,12 @@ class MainApp(ctk.CTk):
         self.pause_btn.configure(state="normal")
         self.stop_btn.configure(state="normal")
 
+        request_interval = self.config.get("request_interval", 1.0)
+
         self.checker.start(
             self.excel_data, excel_path, prompt_name,
             custom_prompt, api_config, resume=resume,
+            request_interval=request_interval,
         )
 
     def _toggle_pause(self):

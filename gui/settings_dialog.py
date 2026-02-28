@@ -75,12 +75,27 @@ class SettingsDialog(ctk.CTkToplevel):
             row=3, column=1, sticky="ew", pady=5, padx=5
         )
 
+        # 请求间隔
+        ctk.CTkLabel(tab, text="请求间隔(秒):").grid(row=4, column=0, sticky="w", pady=5, padx=5)
+        interval_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        interval_frame.grid(row=4, column=1, sticky="w", pady=5, padx=5)
+        self.interval_var = ctk.StringVar(
+            value=str(self.config.get("request_interval", 1.0))
+        )
+        ctk.CTkEntry(interval_frame, textvariable=self.interval_var, width=80).pack(
+            side="left"
+        )
+        ctk.CTkLabel(
+            interval_frame, text="  每次API调用后等待的秒数，防止触发频率限制",
+            text_color="gray",
+        ).pack(side="left")
+
         # 测试连接按钮
         self.test_btn = ctk.CTkButton(tab, text="测试连接", command=self._test_connection)
-        self.test_btn.grid(row=4, column=1, sticky="w", pady=10, padx=5)
+        self.test_btn.grid(row=5, column=1, sticky="w", pady=10, padx=5)
 
         self.test_label = ctk.CTkLabel(tab, text="", text_color="gray")
-        self.test_label.grid(row=5, column=0, columnspan=2, sticky="w", padx=5)
+        self.test_label.grid(row=6, column=0, columnspan=2, sticky="w", padx=5)
 
         tab.grid_columnconfigure(1, weight=1)
 
@@ -259,6 +274,10 @@ class SettingsDialog(ctk.CTkToplevel):
         self.config["base_url"] = self.base_url_var.get()
         self.config["api_key"] = self.api_key_var.get()
         self.config["model"] = self.model_var.get()
+        try:
+            self.config["request_interval"] = max(0, float(self.interval_var.get()))
+        except ValueError:
+            self.config["request_interval"] = 1.0
 
         # 保存自定义提示词 (包含对内置提示词的修改)
         custom_prompts = {}

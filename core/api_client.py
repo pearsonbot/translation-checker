@@ -109,7 +109,12 @@ class LLMClient:
             {"role": "user", "content": user_prompt},
         ]
 
-        for attempt in range(1, self.max_retries + 1):
+        rate_limit_retries = 0
+        max_rate_limit_retries = 5
+        attempt = 0
+
+        while attempt < self.max_retries:
+            attempt += 1
             try:
                 logger.info(f"API调用 (第{attempt}次尝试)")
                 result = self._request(messages)
@@ -124,11 +129,29 @@ class LLMClient:
                     body = e.response.text[:200]
                 except Exception:
                     pass
+
+                # 429 频率限制：读取 Retry-After，不消耗普通重试次数
+                if e.response is not None and e.response.status_code == 429:
+                    rate_limit_retries += 1
+                    if rate_limit_retries > max_rate_limit_retries:
+                        logger.error("触发频率限制次数过多，放弃重试")
+                        break
+                    retry_after = e.response.headers.get("Retry-After")
+                    wait = int(retry_after) if retry_after and retry_after.isdigit() else 10
+                    wait = min(wait, 60)  # 上限 60 秒
+                    logger.warning(
+                        f"触发频率限制 (429)，等待 {wait} 秒后重试 "
+                        f"({rate_limit_retries}/{max_rate_limit_retries})"
+                    )
+                    time.sleep(wait)
+                    attempt -= 1  # 429 不消耗普通重试次数
+                    continue
+
                 logger.warning(
                     f"API调用失败 (第{attempt}次): HTTP {status} "
                     f"URL={self.api_url} 响应={body}"
                 )
-                # 4xx 客户端错误（如 401 认证失败、404 路径错误）不重试
+                # 其他 4xx 客户端错误（如 401 认证失败、404 路径错误）不重试
                 if e.response is not None and 400 <= e.response.status_code < 500:
                     break
                 if attempt < self.max_retries:

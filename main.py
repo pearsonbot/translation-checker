@@ -32,6 +32,7 @@ DEFAULT_CONFIG = {
     "base_url": "",
     "api_key": "",
     "model": "",
+    "request_interval": 1.0,
     "custom_prompts": {},
 }
 

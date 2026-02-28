@@ -92,7 +92,8 @@ class TranslationChecker:
         if os.path.exists(cp_path):
             os.remove(cp_path)
 
-    def start(self, data, excel_path, prompt_name, custom_prompt, api_config, resume=False):
+    def start(self, data, excel_path, prompt_name, custom_prompt, api_config,
+              resume=False, request_interval=1.0):
         """启动校验任务。
 
         Args:
@@ -102,6 +103,7 @@ class TranslationChecker:
             custom_prompt: 自定义提示词 dict {"system": ..., "user": ...}，非自定义时为 None
             api_config: API 配置 {"base_url", "api_key", "model"}
             resume: 是否从断点续传
+            request_interval: 每次 API 调用之间的等待秒数（防止触发频率限制）
         """
         if self.state == CheckerState.RUNNING:
             return
@@ -110,7 +112,8 @@ class TranslationChecker:
 
         self._thread = threading.Thread(
             target=self._run,
-            args=(data, excel_path, prompt_name, custom_prompt, api_config, resume),
+            args=(data, excel_path, prompt_name, custom_prompt, api_config,
+                  resume, request_interval),
             daemon=True,
         )
         self._thread.start()
@@ -133,7 +136,8 @@ class TranslationChecker:
             self._set_state(CheckerState.STOPPING)
             self._log("正在停止校验...")
 
-    def _run(self, data, excel_path, prompt_name, custom_prompt, api_config, resume):
+    def _run(self, data, excel_path, prompt_name, custom_prompt, api_config,
+             resume, request_interval):
         """校验主循环（在子线程中运行）。"""
         try:
             client = LLMClient(
@@ -194,6 +198,10 @@ class TranslationChecker:
                 user_prompt = format_prompt(
                     user_template, item["source"], item["target"]
                 )
+
+                # 请求间隔（第一行不等待）
+                if processed > len(completed_rows) and request_interval > 0:
+                    time.sleep(request_interval)
 
                 # 调用 API
                 self._log(f"正在校验第 {item['row']} 行 ({processed + 1}/{total})...")

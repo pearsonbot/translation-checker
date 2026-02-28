@@ -51,11 +51,15 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.2.1
-          name: "v1.2.1 - 修复 URL 拼接导致的 404 错误"
+          tag_name: v1.3.0
+          name: "v1.3.0 - API 请求频率限制保护"
           body: |
-            ## 修复内容
+            ## 新功能
+            - 设置中新增「请求间隔」配置项（默认 1 秒），防止批量校验触发 API 频率限制
+            - 自动识别 429 (Rate Limit) 响应，读取 Retry-After 头智能等待后重试
+            - 429 重试不消耗普通重试次数，最多自动重试 5 次
+
+            ## 修复
             - 修复 base_url 拼接导致的 404 错误（智能识别 URL 是否已包含 /chat/completions）
-            - 测试连接和错误信息中显示实际请求地址，方便排查
-            - 使用 requests 库替换 OpenAI SDK (httpx)，与验证通过的脚本调用方式一致
+            - 使用 requests 替换 OpenAI SDK (httpx)，与验证通过的脚本调用方式一致
           files: TranslationChecker-windows.zip
