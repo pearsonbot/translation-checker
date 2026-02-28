@@ -51,15 +51,18 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.3.0
-          name: "v1.3.0 - API 请求频率限制保护"
+          tag_name: v1.4.0
+          name: "v1.4.0 - 间隔修复 / 批量模式 / 停止导出"
           body: |
             ## 新功能
+            - **批量模式**：设置中新增高级选项，可一次发送多行给模型（减少 API 调用次数），解析失败自动回退逐行处理
+            - **429 频率限制日志**：触发限流时的等待/重试信息实时显示在 UI 日志面板
+            - **提前停止导出**：点击停止后自动导出已完成的部分结果到 Excel（文件名含 `_partial_` 标识）
             - 设置中新增「请求间隔」配置项（默认 1 秒），防止批量校验触发 API 频率限制
-            - 自动识别 429 (Rate Limit) 响应，读取 Retry-After 头智能等待后重试
-            - 429 重试不消耗普通重试次数，最多自动重试 5 次
+            - 自动识别 429 (Rate Limit) 响应，读取 Retry-After 头智能等待后重试（最多 5 次，不消耗普通重试次数）
 
             ## 修复
+            - **修复 API 调用间隔不生效**：`sleep` 条件中 `processed` 与 `completed_rows` 同步增长导致永远为 False
             - 修复 base_url 拼接导致的 404 错误（智能识别 URL 是否已包含 /chat/completions）
-            - 使用 requests 替换 OpenAI SDK (httpx)，与验证通过的脚本调用方式一致
+            - 使用 requests 替换 OpenAI SDK (httpx)，彻底解决 API 调用失败
           files: TranslationChecker-windows.zip
