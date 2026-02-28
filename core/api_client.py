@@ -45,13 +45,30 @@ class LLMClient:
         self.timeout = timeout
         self.max_retries = max_retries
 
-        # 规范化 base_url：去除尾部多余斜杠，拼接完整端点
-        self.api_url = base_url.rstrip("/") + "/chat/completions"
+        # 智能拼接 URL：兼容用户填写各种格式的 base_url
+        self.api_url = self._build_url(base_url)
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
         logger.info(f"LLMClient 已初始化: url={self.api_url}, model={model}")
+
+    @staticmethod
+    def _build_url(base_url):
+        """根据用户输入的 base_url 构建完整的 chat/completions 端点。
+
+        兼容以下输入格式：
+          - https://api.deepseek.com/v1
+          - https://api.deepseek.com/v1/
+          - https://api.deepseek.com/v1/chat/completions
+          - https://api.deepseek.com/v1/chat/completions/
+        """
+        url = base_url.strip().rstrip("/")
+        if url.endswith("/chat/completions"):
+            return url
+        if url.endswith("/chat"):
+            return url + "/completions"
+        return url + "/chat/completions"
 
     def _request(self, messages, max_tokens=None):
         """发送请求到 API 并返回原始响应 JSON。"""
@@ -108,9 +125,10 @@ class LLMClient:
                 except Exception:
                     pass
                 logger.warning(
-                    f"API调用失败 (第{attempt}次): HTTP {status}: {body}"
+                    f"API调用失败 (第{attempt}次): HTTP {status} "
+                    f"URL={self.api_url} 响应={body}"
                 )
-                # 4xx 客户端错误（如 401 认证失败）不需要重试
+                # 4xx 客户端错误（如 401 认证失败、404 路径错误）不重试
                 if e.response is not None and 400 <= e.response.status_code < 500:
                     break
                 if attempt < self.max_retries:
@@ -175,17 +193,26 @@ class LLMClient:
         try:
             messages = [{"role": "user", "content": "Hi, respond with 'OK'"}]
             self._request(messages, max_tokens=10)
-            return True, f"连接成功，模型: {self.model}"
+            return True, f"连接成功，模型: {self.model}\n请求地址: {self.api_url}"
         except requests.exceptions.ConnectionError as e:
-            logger.error(f"连接错误 (网络/代理/DNS): {e}")
-            return False, f"连接失败 (网络/代理/DNS错误): {e}"
+            logger.error(f"连接错误 (网络/代理/DNS): URL={self.api_url} {e}")
+            return False, f"连接失败 (网络错误)\n请求地址: {self.api_url}"
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else "N/A"
-            logger.error(f"HTTP状态错误: {status} - {e}")
-            return False, f"连接失败 (HTTP {status}): {e}"
+            body = ""
+            try:
+                body = e.response.text[:200]
+            except Exception:
+                pass
+            logger.error(f"HTTP错误: {status} URL={self.api_url} 响应={body}")
+            return False, (
+                f"连接失败 (HTTP {status})\n"
+                f"请求地址: {self.api_url}\n"
+                f"服务器响应: {body[:100] if body else '无'}"
+            )
         except requests.exceptions.Timeout as e:
-            logger.error(f"连接超时: {e}")
-            return False, f"连接失败 (超时): {e}"
+            logger.error(f"连接超时: URL={self.api_url}")
+            return False, f"连接失败 (超时)\n请求地址: {self.api_url}"
         except Exception as e:
             logger.error(f"连接失败: {type(e).__name__}: {e}")
-            return False, f"连接失败: {type(e).__name__}: {e}"
+            return False, f"连接失败: {type(e).__name__}: {e}\n请求地址: {self.api_url}"
