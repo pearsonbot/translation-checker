@@ -51,14 +51,13 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.0
-          name: "v1.1.0 - 修复 API 调用失败"
+          tag_name: v1.2.0
+          name: "v1.2.0 - 使用 requests 替换 OpenAI SDK 修复 API 调用"
           body: |
             ## 修复内容
-            - 修复 OpenAI SDK 的 httpx 客户端 SSL 证书问题（打包 exe 后 HTTPS 请求失败）
-            - 修复代理环境变量未被 httpx 读取的问题（trust_env=True）
-            - 修复 base_url 尾部斜杠导致的路径拼接异常
-            - 打包时包含 certifi CA 证书文件
-            - 显式声明 httpx 和 certifi 依赖
-            - 增强错误日志，区分网络/代理/SSL/HTTP 状态码等不同错误类型
+            - 使用 requests 库替换 OpenAI SDK (httpx)，彻底解决 API 调用失败问题
+            - 调用方式与验证通过的 Python 脚本完全一致
+            - 移除 openai/httpx 依赖，减小打包体积
+            - 4xx 客户端错误（如认证失败）不再无意义重试
+            - 增强错误日志，区分网络/HTTP 状态码/超时等错误类型
           files: TranslationChecker-windows.zip

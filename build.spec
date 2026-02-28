@@ -2,8 +2,8 @@
 """PyInstaller 打包配置 - 翻译校验工具"""
 
 import os
-import customtkinter
 import certifi
+import customtkinter
 
 # CustomTkinter 资源路径
 ctk_path = os.path.dirname(customtkinter.__file__)
@@ -17,7 +17,7 @@ a = Analysis(
     datas=[
         # config.json 不打包，首次运行时由程序自动在 exe 目录生成
         (ctk_path, 'customtkinter/'),
-        # SSL 证书，确保 httpx/openai SDK 的 HTTPS 请求正常工作
+        # SSL 证书，确保 requests 库打包后 HTTPS 正常工作
         (certifi_ca_bundle, 'certifi/'),
     ],
     hiddenimports=[
@@ -25,24 +25,11 @@ a = Analysis(
         'darkdetect',
         'openpyxl',
         'et_xmlfile',
-        'openai',
-        'httpx',
-        'httpx._transports',
-        'httpx._transports.default',
-        'httpcore',
+        'requests',
+        'urllib3',
         'certifi',
-        'anyio',
-        'anyio._backends',
-        'anyio._backends._asyncio',
-        'sniffio',
-        'h11',
-        'pydantic',
-        'pydantic_core',
-        'jiter',
-        'distro',
-        'typing_extensions',
-        'typing_inspection',
-        'annotated_types',
+        'charset_normalizer',
+        'idna',
     ],
     hookspath=[],
     hooksconfig={},

@@ -1,14 +1,10 @@
-"""LLM API 客户端，基于 OpenAI SDK 兼容多家服务商。"""
+"""LLM API 客户端，使用 requests 直接调用 OpenAI 兼容接口。"""
 
 import json
-import os
-import ssl
 import time
 import logging
 
-import certifi
-import httpx
-from openai import OpenAI
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -49,24 +45,32 @@ class LLMClient:
         self.timeout = timeout
         self.max_retries = max_retries
 
-        # 规范化 base_url：去除尾部多余斜杠
-        base_url = base_url.rstrip("/")
+        # 规范化 base_url：去除尾部多余斜杠，拼接完整端点
+        self.api_url = base_url.rstrip("/") + "/chat/completions"
+        self.headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        logger.info(f"LLMClient 已初始化: url={self.api_url}, model={model}")
 
-        # 构建自定义 httpx 客户端，确保 SSL 证书和代理正确生效
-        ssl_context = ssl.create_default_context(cafile=certifi.where())
-        http_client = httpx.Client(
-            verify=ssl_context,
-            timeout=timeout,
-            trust_env=True,  # 读取系统代理环境变量
-        )
+    def _request(self, messages, max_tokens=None):
+        """发送请求到 API 并返回原始响应 JSON。"""
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.3,
+        }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
 
-        self.client = OpenAI(
-            base_url=base_url,
-            api_key=api_key,
-            timeout=timeout,
-            http_client=http_client,
+        response = requests.post(
+            url=self.api_url,
+            headers=self.headers,
+            data=json.dumps(payload),
+            timeout=self.timeout,
         )
-        logger.info(f"LLMClient 已初始化: base_url={base_url}, model={model}")
+        response.raise_for_status()
+        return response.json()
 
     def call(self, system_prompt, user_prompt):
         """调用 LLM API，返回解析后的 JSON 结果。
@@ -83,20 +87,36 @@ class LLMClient:
             Exception: API 调用失败且重试耗尽时抛出
         """
         last_error = None
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
 
         for attempt in range(1, self.max_retries + 1):
             try:
                 logger.info(f"API调用 (第{attempt}次尝试)")
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=0.3,
-                )
-                content = response.choices[0].message.content.strip()
+                result = self._request(messages)
+                content = result["choices"][0]["message"]["content"].strip()
                 return self._parse_response(content)
+
+            except requests.exceptions.HTTPError as e:
+                last_error = e
+                status = e.response.status_code if e.response is not None else "N/A"
+                body = ""
+                try:
+                    body = e.response.text[:200]
+                except Exception:
+                    pass
+                logger.warning(
+                    f"API调用失败 (第{attempt}次): HTTP {status}: {body}"
+                )
+                # 4xx 客户端错误（如 401 认证失败）不需要重试
+                if e.response is not None and 400 <= e.response.status_code < 500:
+                    break
+                if attempt < self.max_retries:
+                    wait = 2 ** attempt
+                    logger.info(f"等待 {wait} 秒后重试...")
+                    time.sleep(wait)
 
             except Exception as e:
                 last_error = e
@@ -153,21 +173,19 @@ class LLMClient:
             tuple: (成功: bool, 消息: str)
         """
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": "Hi, respond with 'OK'"}],
-                max_tokens=10,
-            )
+            messages = [{"role": "user", "content": "Hi, respond with 'OK'"}]
+            self._request(messages, max_tokens=10)
             return True, f"连接成功，模型: {self.model}"
-        except httpx.ConnectError as e:
+        except requests.exceptions.ConnectionError as e:
             logger.error(f"连接错误 (网络/代理/DNS): {e}")
             return False, f"连接失败 (网络/代理/DNS错误): {e}"
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP状态错误: {e.response.status_code} - {e}")
-            return False, f"连接失败 (HTTP {e.response.status_code}): {e}"
-        except ssl.SSLError as e:
-            logger.error(f"SSL证书错误: {e}")
-            return False, f"连接失败 (SSL证书错误): {e}"
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else "N/A"
+            logger.error(f"HTTP状态错误: {status} - {e}")
+            return False, f"连接失败 (HTTP {status}): {e}"
+        except requests.exceptions.Timeout as e:
+            logger.error(f"连接超时: {e}")
+            return False, f"连接失败 (超时): {e}"
         except Exception as e:
             logger.error(f"连接失败: {type(e).__name__}: {e}")
             return False, f"连接失败: {type(e).__name__}: {e}"
