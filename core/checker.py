@@ -8,7 +8,7 @@ import threading
 from datetime import datetime
 
 from core.api_client import LLMClient
-from core.prompts import get_prompt, format_prompt
+from core.prompts import get_prompt, format_prompt, BATCH_SYSTEM_PROMPT, format_batch_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,9 @@ class TranslationChecker:
         if os.path.exists(cp_path):
             os.remove(cp_path)
 
-    def start(self, data, excel_path, prompt_name, custom_prompt, api_config, resume=False):
+    def start(self, data, excel_path, prompt_name, custom_prompt, api_config,
+              resume=False, request_interval=1.0,
+              batch_mode=False, batch_size=5):
         """启动校验任务。
 
         Args:
@@ -102,6 +104,9 @@ class TranslationChecker:
             custom_prompt: 自定义提示词 dict {"system": ..., "user": ...}，非自定义时为 None
             api_config: API 配置 {"base_url", "api_key", "model"}
             resume: 是否从断点续传
+            request_interval: 每次 API 调用之间的等待秒数（防止触发频率限制）
+            batch_mode: 是否开启批量模式
+            batch_size: 每批行数
         """
         if self.state == CheckerState.RUNNING:
             return
@@ -110,7 +115,8 @@ class TranslationChecker:
 
         self._thread = threading.Thread(
             target=self._run,
-            args=(data, excel_path, prompt_name, custom_prompt, api_config, resume),
+            args=(data, excel_path, prompt_name, custom_prompt, api_config,
+                  resume, request_interval, batch_mode, batch_size),
             daemon=True,
         )
         self._thread.start()
@@ -133,13 +139,36 @@ class TranslationChecker:
             self._set_state(CheckerState.STOPPING)
             self._log("正在停止校验...")
 
-    def _run(self, data, excel_path, prompt_name, custom_prompt, api_config, resume):
+    def _check_stop(self, excel_path, completed_rows, processed, total):
+        """检查停止/暂停信号。返回 True 表示应停止。"""
+        if self.state == CheckerState.STOPPING:
+            self._log(f"校验已停止，已完成 {processed}/{total}")
+            self.save_checkpoint(excel_path,
+                                 list(completed_rows), self.results)
+            self._set_state(CheckerState.IDLE)
+            return True
+
+        while self.state == CheckerState.PAUSED:
+            time.sleep(0.5)
+
+        if self.state == CheckerState.STOPPING:
+            self._log(f"校验已停止，已完成 {processed}/{total}")
+            self.save_checkpoint(excel_path,
+                                 list(completed_rows), self.results)
+            self._set_state(CheckerState.IDLE)
+            return True
+
+        return False
+
+    def _run(self, data, excel_path, prompt_name, custom_prompt, api_config,
+             resume, request_interval, batch_mode=False, batch_size=5):
         """校验主循环（在子线程中运行）。"""
         try:
             client = LLMClient(
                 base_url=api_config["base_url"],
                 api_key=api_config["api_key"],
                 model=api_config["model"],
+                on_log=self._log,
             )
 
             # 获取提示词模板
@@ -165,75 +194,26 @@ class TranslationChecker:
 
             total = len(data)
             processed = len(completed_rows)
+            initial_completed = len(completed_rows)
 
-            for item in data:
-                # 检查停止信号
-                if self.state == CheckerState.STOPPING:
-                    self._log(f"校验已停止，已完成 {processed}/{total}")
-                    self.save_checkpoint(excel_path,
-                                         list(completed_rows), self.results)
-                    self._set_state(CheckerState.IDLE)
-                    return
-
-                # 等待暂停恢复
-                while self.state == CheckerState.PAUSED:
-                    time.sleep(0.5)
-
-                if self.state == CheckerState.STOPPING:
-                    self._log(f"校验已停止，已完成 {processed}/{total}")
-                    self.save_checkpoint(excel_path,
-                                         list(completed_rows), self.results)
-                    self._set_state(CheckerState.IDLE)
-                    return
-
-                # 跳过已完成行
-                if item["row"] in completed_rows:
-                    continue
-
-                # 构造用户提示词
-                user_prompt = format_prompt(
-                    user_template, item["source"], item["target"]
-                )
-
-                # 调用 API
-                self._log(f"正在校验第 {item['row']} 行 ({processed + 1}/{total})...")
-                try:
-                    result = client.call(system_prompt, user_prompt)
-                except Exception as e:
-                    result = {
-                        "score": 0,
-                        "issues": [f"API调用失败: {e}"],
-                        "suggestion": "",
-                        "summary": "API调用失败",
-                    }
-                    self._log(f"第 {item['row']} 行校验失败: {e}")
-
-                # 记录结果
-                item_result = {
-                    "row": item["row"],
-                    "source": item["source"],
-                    "target": item["target"],
-                    "result": result,
-                }
-                self.results.append(item_result)
-                completed_rows.add(item["row"])
-                processed += 1
-
-                # 保存断点
-                self.save_checkpoint(excel_path,
-                                     list(completed_rows), self.results)
-
-                # 回调进度
-                if self.on_progress:
-                    self.on_progress(processed, total, item_result)
+            if batch_mode:
+                self._log(f"批量模式已开启，每批 {batch_size} 行")
+                self._run_batch(client, data, excel_path, system_prompt,
+                                user_template, completed_rows, processed,
+                                initial_completed, total, request_interval,
+                                batch_size)
+            else:
+                self._run_single(client, data, excel_path, system_prompt,
+                                 user_template, completed_rows, processed,
+                                 initial_completed, total, request_interval)
 
             # 全部完成
-            self._log(f"校验完成，共处理 {total} 行")
-            self.delete_checkpoint(excel_path)
-            self._set_state(CheckerState.COMPLETED)
-
-            if self.on_complete:
-                self.on_complete(self.results)
+            if self.state == CheckerState.RUNNING:
+                self._log(f"校验完成，共处理 {total} 行")
+                self.delete_checkpoint(excel_path)
+                self._set_state(CheckerState.COMPLETED)
+                if self.on_complete:
+                    self.on_complete(self.results)
 
         except Exception as e:
             logger.exception("校验过程发生异常")
@@ -241,3 +221,144 @@ class TranslationChecker:
             self._set_state(CheckerState.ERROR)
             if self.on_error:
                 self.on_error(str(e))
+
+    def _run_single(self, client, data, excel_path, system_prompt,
+                    user_template, completed_rows, processed,
+                    initial_completed, total, request_interval):
+        """逐行校验模式。"""
+        for item in data:
+            if self._check_stop(excel_path, completed_rows, processed, total):
+                return
+
+            if item["row"] in completed_rows:
+                continue
+
+            user_prompt = format_prompt(
+                user_template, item["source"], item["target"]
+            )
+
+            # 请求间隔（本次启动的第一行不等待）
+            if processed > initial_completed and request_interval > 0:
+                time.sleep(request_interval)
+
+            self._log(f"正在校验第 {item['row']} 行 ({processed + 1}/{total})...")
+            try:
+                result = client.call(system_prompt, user_prompt)
+            except Exception as e:
+                result = {
+                    "score": 0,
+                    "issues": [f"API调用失败: {e}"],
+                    "suggestion": "",
+                    "summary": "API调用失败",
+                }
+                self._log(f"第 {item['row']} 行校验失败: {e}")
+
+            self._record_result(item, result, excel_path, completed_rows)
+            processed += 1
+            if self.on_progress:
+                self.on_progress(processed, total, self.results[-1])
+
+    def _run_batch(self, client, data, excel_path, system_prompt,
+                   user_template, completed_rows, processed,
+                   initial_completed, total, request_interval, batch_size):
+        """批量校验模式。解析失败时自动回退为逐行处理。"""
+        # 过滤出待处理行
+        pending = [item for item in data if item["row"] not in completed_rows]
+
+        # 按 batch_size 分组
+        for i in range(0, len(pending), batch_size):
+            if self._check_stop(excel_path, completed_rows, processed, total):
+                return
+
+            batch = pending[i:i + batch_size]
+
+            # 请求间隔
+            if processed > initial_completed and request_interval > 0:
+                time.sleep(request_interval)
+
+            # 构造批量提示词
+            batch_items = [
+                {"id": idx + 1, "source": item["source"], "target": item["target"]}
+                for idx, item in enumerate(batch)
+            ]
+            batch_user_prompt = format_batch_prompt(batch_items)
+
+            rows_desc = ", ".join(str(item["row"]) for item in batch)
+            self._log(f"正在批量校验第 {rows_desc} 行 "
+                      f"({processed + 1}-{processed + len(batch)}/{total})...")
+
+            batch_results = None
+            try:
+                batch_results = client.call_batch(
+                    BATCH_SYSTEM_PROMPT, batch_user_prompt, len(batch)
+                )
+            except Exception as e:
+                self._log(f"批量API调用失败: {e}，回退为逐行处理")
+
+            if batch_results is not None:
+                # 批量成功：按 id 映射回各行
+                result_map = {r["id"]: r for r in batch_results}
+                for idx, item in enumerate(batch):
+                    r = result_map.get(idx + 1, {
+                        "score": 0,
+                        "issues": ["批量返回中缺少此行结果"],
+                        "suggestion": "",
+                        "summary": "结果缺失",
+                    })
+                    result = {
+                        "score": r.get("score", 0),
+                        "issues": r.get("issues", []),
+                        "suggestion": r.get("suggestion", ""),
+                        "summary": r.get("summary", ""),
+                    }
+                    self._record_result(item, result, excel_path, completed_rows)
+                    processed += 1
+                    if self.on_progress:
+                        self.on_progress(processed, total, self.results[-1])
+            else:
+                # 批量失败：回退为逐行处理
+                self._log(f"回退为逐行处理 {len(batch)} 行...")
+                for item in batch:
+                    if self._check_stop(excel_path, completed_rows,
+                                        processed, total):
+                        return
+
+                    if item["row"] in completed_rows:
+                        continue
+
+                    if processed > initial_completed and request_interval > 0:
+                        time.sleep(request_interval)
+
+                    user_prompt = format_prompt(
+                        user_template, item["source"], item["target"]
+                    )
+                    self._log(f"正在校验第 {item['row']} 行 "
+                              f"({processed + 1}/{total})...")
+                    try:
+                        result = client.call(system_prompt, user_prompt)
+                    except Exception as e:
+                        result = {
+                            "score": 0,
+                            "issues": [f"API调用失败: {e}"],
+                            "suggestion": "",
+                            "summary": "API调用失败",
+                        }
+                        self._log(f"第 {item['row']} 行校验失败: {e}")
+
+                    self._record_result(item, result, excel_path,
+                                        completed_rows)
+                    processed += 1
+                    if self.on_progress:
+                        self.on_progress(processed, total, self.results[-1])
+
+    def _record_result(self, item, result, excel_path, completed_rows):
+        """记录单条结果并保存断点。"""
+        item_result = {
+            "row": item["row"],
+            "source": item["source"],
+            "target": item["target"],
+            "result": result,
+        }
+        self.results.append(item_result)
+        completed_rows.add(item["row"])
+        self.save_checkpoint(excel_path, list(completed_rows), self.results)

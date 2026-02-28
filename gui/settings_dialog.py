@@ -14,7 +14,7 @@ class SettingsDialog(ctk.CTkToplevel):
         super().__init__(parent)
 
         self.title("设置")
-        self.geometry("650x580")
+        self.geometry("650x680")
         self.resizable(False, False)
         self.grab_set()
 
@@ -75,14 +75,77 @@ class SettingsDialog(ctk.CTkToplevel):
             row=3, column=1, sticky="ew", pady=5, padx=5
         )
 
+        # 请求间隔
+        ctk.CTkLabel(tab, text="请求间隔(秒):").grid(row=4, column=0, sticky="w", pady=5, padx=5)
+        interval_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        interval_frame.grid(row=4, column=1, sticky="w", pady=5, padx=5)
+        self.interval_var = ctk.StringVar(
+            value=str(self.config.get("request_interval", 1.0))
+        )
+        ctk.CTkEntry(interval_frame, textvariable=self.interval_var, width=80).pack(
+            side="left"
+        )
+        ctk.CTkLabel(
+            interval_frame, text="  每次API调用后等待的秒数，防止触发频率限制",
+            text_color="gray",
+        ).pack(side="left")
+
+        # 高级选项分隔
+        separator = ctk.CTkLabel(tab, text="── 高级选项 ──", text_color="gray")
+        separator.grid(row=5, column=0, columnspan=2, pady=(15, 5), padx=5)
+
+        # 批量模式开关
+        ctk.CTkLabel(tab, text="批量模式:").grid(row=6, column=0, sticky="w", pady=5, padx=5)
+        batch_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        batch_frame.grid(row=6, column=1, sticky="w", pady=5, padx=5)
+
+        self.batch_mode_var = ctk.BooleanVar(
+            value=self.config.get("batch_mode", False)
+        )
+        ctk.CTkSwitch(
+            batch_frame, text="", variable=self.batch_mode_var,
+            width=40, command=self._on_batch_toggle,
+        ).pack(side="left")
+        ctk.CTkLabel(
+            batch_frame,
+            text="  一次发送多行给模型（减少API调用次数，可能影响评分精度）",
+            text_color="gray",
+        ).pack(side="left")
+
+        # 每批行数
+        ctk.CTkLabel(tab, text="每批行数:").grid(row=7, column=0, sticky="w", pady=5, padx=5)
+        batch_size_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        batch_size_frame.grid(row=7, column=1, sticky="w", pady=5, padx=5)
+        self.batch_size_var = ctk.StringVar(
+            value=str(self.config.get("batch_size", 5))
+        )
+        self.batch_size_entry = ctk.CTkEntry(
+            batch_size_frame, textvariable=self.batch_size_var, width=80,
+        )
+        self.batch_size_entry.pack(side="left")
+        ctk.CTkLabel(
+            batch_size_frame, text="  建议 3~10，过大可能导致结果不完整",
+            text_color="gray",
+        ).pack(side="left")
+
+        # 根据当前 batch_mode 状态设置 entry 可用性
+        if not self.batch_mode_var.get():
+            self.batch_size_entry.configure(state="disabled")
+
         # 测试连接按钮
         self.test_btn = ctk.CTkButton(tab, text="测试连接", command=self._test_connection)
-        self.test_btn.grid(row=4, column=1, sticky="w", pady=10, padx=5)
+        self.test_btn.grid(row=8, column=1, sticky="w", pady=10, padx=5)
 
         self.test_label = ctk.CTkLabel(tab, text="", text_color="gray")
-        self.test_label.grid(row=5, column=0, columnspan=2, sticky="w", padx=5)
+        self.test_label.grid(row=9, column=0, columnspan=2, sticky="w", padx=5)
 
         tab.grid_columnconfigure(1, weight=1)
+
+    def _on_batch_toggle(self):
+        if self.batch_mode_var.get():
+            self.batch_size_entry.configure(state="normal")
+        else:
+            self.batch_size_entry.configure(state="disabled")
 
     def _on_provider_change(self, provider_name):
         preset = PRESET_PROVIDERS.get(provider_name, {})
@@ -259,6 +322,16 @@ class SettingsDialog(ctk.CTkToplevel):
         self.config["base_url"] = self.base_url_var.get()
         self.config["api_key"] = self.api_key_var.get()
         self.config["model"] = self.model_var.get()
+        try:
+            self.config["request_interval"] = max(0, float(self.interval_var.get()))
+        except ValueError:
+            self.config["request_interval"] = 1.0
+
+        self.config["batch_mode"] = self.batch_mode_var.get()
+        try:
+            self.config["batch_size"] = max(2, min(20, int(self.batch_size_var.get())))
+        except ValueError:
+            self.config["batch_size"] = 5
 
         # 保存自定义提示词 (包含对内置提示词的修改)
         custom_prompts = {}
