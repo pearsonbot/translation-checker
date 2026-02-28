@@ -1,8 +1,13 @@
 """LLM API 客户端，基于 OpenAI SDK 兼容多家服务商。"""
 
 import json
+import os
+import ssl
 import time
 import logging
+
+import certifi
+import httpx
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)
@@ -43,11 +48,25 @@ class LLMClient:
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
+
+        # 规范化 base_url：去除尾部多余斜杠
+        base_url = base_url.rstrip("/")
+
+        # 构建自定义 httpx 客户端，确保 SSL 证书和代理正确生效
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        http_client = httpx.Client(
+            verify=ssl_context,
+            timeout=timeout,
+            trust_env=True,  # 读取系统代理环境变量
+        )
+
         self.client = OpenAI(
             base_url=base_url,
             api_key=api_key,
             timeout=timeout,
+            http_client=http_client,
         )
+        logger.info(f"LLMClient 已初始化: base_url={base_url}, model={model}")
 
     def call(self, system_prompt, user_prompt):
         """调用 LLM API，返回解析后的 JSON 结果。
@@ -81,13 +100,18 @@ class LLMClient:
 
             except Exception as e:
                 last_error = e
-                logger.warning(f"API调用失败 (第{attempt}次): {e}")
+                logger.warning(
+                    f"API调用失败 (第{attempt}次): {type(e).__name__}: {e}"
+                )
                 if attempt < self.max_retries:
                     wait = 2 ** attempt
                     logger.info(f"等待 {wait} 秒后重试...")
                     time.sleep(wait)
 
-        raise Exception(f"API调用失败，已重试{self.max_retries}次: {last_error}")
+        raise Exception(
+            f"API调用失败，已重试{self.max_retries}次: "
+            f"{type(last_error).__name__}: {last_error}"
+        )
 
     def _parse_response(self, content):
         """解析 LLM 返回的 JSON 内容。"""
@@ -135,5 +159,15 @@ class LLMClient:
                 max_tokens=10,
             )
             return True, f"连接成功，模型: {self.model}"
+        except httpx.ConnectError as e:
+            logger.error(f"连接错误 (网络/代理/DNS): {e}")
+            return False, f"连接失败 (网络/代理/DNS错误): {e}"
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP状态错误: {e.response.status_code} - {e}")
+            return False, f"连接失败 (HTTP {e.response.status_code}): {e}"
+        except ssl.SSLError as e:
+            logger.error(f"SSL证书错误: {e}")
+            return False, f"连接失败 (SSL证书错误): {e}"
         except Exception as e:
-            return False, f"连接失败: {e}"
+            logger.error(f"连接失败: {type(e).__name__}: {e}")
+            return False, f"连接失败: {type(e).__name__}: {e}"

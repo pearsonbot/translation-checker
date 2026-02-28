@@ -3,9 +3,12 @@
 
 import os
 import customtkinter
+import certifi
 
 # CustomTkinter 资源路径
 ctk_path = os.path.dirname(customtkinter.__file__)
+# SSL 证书路径（确保打包后 HTTPS 请求正常工作）
+certifi_ca_bundle = certifi.where()
 
 a = Analysis(
     ['main.py'],
@@ -14,6 +17,8 @@ a = Analysis(
     datas=[
         # config.json 不打包，首次运行时由程序自动在 exe 目录生成
         (ctk_path, 'customtkinter/'),
+        # SSL 证书，确保 httpx/openai SDK 的 HTTPS 请求正常工作
+        (certifi_ca_bundle, 'certifi/'),
     ],
     hiddenimports=[
         'customtkinter',
