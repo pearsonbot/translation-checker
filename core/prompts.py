@@ -97,6 +97,49 @@ BUILTIN_PROMPTS = {
 }
 
 
+BATCH_SYSTEM_PROMPT = """你是一位专业的中英文翻译质量审核专家。你需要对给定的多组中文原文和英文译文逐一进行翻译质量校验。
+请严格按照以下JSON数组格式返回你的分析结果，不要返回任何其他内容。
+数组中每个元素对应一组翻译，必须包含id字段来标识对应的编号：
+[
+  {
+    "id": <编号>,
+    "score": <1-10的整数评分>,
+    "issues": [<问题列表，每个问题是一个字符串>],
+    "suggestion": "<修改建议，如果翻译质量好则写'无需修改'>",
+    "summary": "<一句话总结评价>"
+  },
+  ...
+]
+
+评分标准：
+- 9-10分：翻译准确、流畅、自然，无明显问题
+- 7-8分：翻译基本准确，有少量小问题
+- 5-6分：翻译存在明显问题，但核心意思基本传达
+- 3-4分：翻译有较多错误，影响理解
+- 1-2分：翻译严重失误，意思完全偏离"""
+
+
+def format_batch_prompt(items):
+    """将多组翻译格式化为批量校验的用户提示词。
+
+    Args:
+        items: [{"id": 1, "source": "中文", "target": "English"}, ...]
+
+    Returns:
+        str: 格式化后的批量用户提示词
+    """
+    parts = [f"请对以下 {len(items)} 组中英文翻译逐一进行综合翻译质量校验。\n"]
+    for item in items:
+        parts.append(
+            f"--- 第{item['id']}组 ---\n"
+            f"中文原文：\n{item['source']}\n\n"
+            f"英文译文：\n{item['target']}\n"
+        )
+    parts.append(f"\n请严格按照JSON数组格式返回全部 {len(items)} 组的分析结果，"
+                 f"每组结果必须包含对应的id字段。")
+    return "\n".join(parts)
+
+
 def get_prompt_names():
     """返回所有内置提示词模板的名称列表。"""
     return list(BUILTIN_PROMPTS.keys())

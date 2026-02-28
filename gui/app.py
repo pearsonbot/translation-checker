@@ -314,11 +314,14 @@ class MainApp(ctk.CTk):
         self.stop_btn.configure(state="normal")
 
         request_interval = self.config.get("request_interval", 1.0)
+        batch_mode = self.config.get("batch_mode", False)
+        batch_size = self.config.get("batch_size", 5)
 
         self.checker.start(
             self.excel_data, excel_path, prompt_name,
             custom_prompt, api_config, resume=resume,
             request_interval=request_interval,
+            batch_mode=batch_mode, batch_size=batch_size,
         )
 
     def _toggle_pause(self):
@@ -383,18 +386,23 @@ class MainApp(ctk.CTk):
         if children:
             self.tree.see(children[-1])
 
-    def _handle_complete(self, results):
-        self._reset_buttons()
-        self.progress_bar.set(1.0)
-        self.status_label.configure(text="校验完成!")
+    def _export_results(self, results, partial=False):
+        """导出结果到 Excel 文件。
 
-        # 生成输出文件
+        Args:
+            results: 结果列表
+            partial: 是否为部分结果（提前停止时）
+        """
         excel_path = self.file_path_var.get()
         output_dir = self.output_dir_var.get()
+        if not excel_path or not output_dir:
+            return
+
         base_name = os.path.splitext(os.path.basename(excel_path))[0]
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        suffix = "partial" if partial else "checked"
 
-        checked_path = os.path.join(output_dir, f"{base_name}_checked_{timestamp}.xlsx")
+        checked_path = os.path.join(output_dir, f"{base_name}_{suffix}_{timestamp}.xlsx")
         report_path = os.path.join(output_dir, f"{base_name}_report_{timestamp}.xlsx")
 
         try:
@@ -409,15 +417,41 @@ class MainApp(ctk.CTk):
         except Exception as e:
             self._log_message(f"生成报告失败: {e}")
 
-        messagebox.showinfo(
-            "校验完成",
-            f"校验完成，共处理 {len(results)} 行。\n\n"
-            f"结果文件:\n{checked_path}\n\n"
-            f"独立报告:\n{report_path}",
-        )
+        return checked_path, report_path
+
+    def _handle_complete(self, results):
+        self._reset_buttons()
+        self.progress_bar.set(1.0)
+        self.status_label.configure(text="校验完成!")
+
+        paths = self._export_results(results)
+
+        if paths:
+            checked_path, report_path = paths
+            messagebox.showinfo(
+                "校验完成",
+                f"校验完成，共处理 {len(results)} 行。\n\n"
+                f"结果文件:\n{checked_path}\n\n"
+                f"独立报告:\n{report_path}",
+            )
 
     def _handle_state_change(self, new_state):
-        if new_state in (CheckerState.IDLE, CheckerState.ERROR):
+        if new_state == CheckerState.IDLE and self.all_results:
+            # 提前停止时导出已有结果
+            self._reset_buttons()
+            self.status_label.configure(
+                text=f"已停止，已完成 {len(self.all_results)} 行"
+            )
+            paths = self._export_results(self.all_results, partial=True)
+            if paths:
+                checked_path, report_path = paths
+                messagebox.showinfo(
+                    "校验已停止",
+                    f"已停止校验，已完成 {len(self.all_results)} 行的结果已导出。\n\n"
+                    f"结果文件:\n{checked_path}\n\n"
+                    f"独立报告:\n{report_path}",
+                )
+        elif new_state in (CheckerState.IDLE, CheckerState.ERROR):
             self._reset_buttons()
 
     def _reset_buttons(self):

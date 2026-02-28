@@ -33,6 +33,8 @@ DEFAULT_CONFIG = {
     "api_key": "",
     "model": "",
     "request_interval": 1.0,
+    "batch_mode": False,
+    "batch_size": 5,
     "custom_prompts": {},
 }
 
