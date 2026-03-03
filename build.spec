@@ -19,6 +19,8 @@ a = Analysis(
         (ctk_path, 'customtkinter/'),
         # SSL 证书，确保 requests 库打包后 HTTPS 正常工作
         (certifi_ca_bundle, 'certifi/'),
+        # 预设配置文件（提示词模板、服务商预设），支持用户在程序外编辑
+        ('presets', 'presets/'),
     ],
     hiddenimports=[
         'customtkinter',
