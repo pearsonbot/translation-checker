@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
+      - 'claude/**'
   workflow_dispatch:
 
 permissions:
@@ -42,4 +45,23 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          files: TranslationChecker-windows.zip
+
+      - name: Create Release from branch
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.5.0
+          name: "v1.5.0 - 拼写检查模板 / 预设配置外置"
+          body: |
+            ## 新功能
+            - **拼写错误检查模板**：新增预置提示词模板，专注检测英文译文中的拼写错误（typo、多/少字母、易混淆词等）
+            - **预设配置外置**：提示词模板和服务商预设改为从 `presets/` 目录下的 JSON 文件加载，支持在程序外直接编辑
+              - `presets/prompts.json`：提示词模板配置（系统提示词、用户提示词、批量模式系统提示词）
+              - `presets/providers.json`：服务商预设配置（名称、Base URL、默认模型）
+            - 预置服务商仅保留「自定义」选项，用户自行配置 API 地址和模型
+
+            ## 改进
+            - 外部配置文件不存在或解析失败时，自动使用代码内兜底默认值，确保程序正常运行
+            - PyInstaller 打包配置已包含 `presets/` 目录，打包后的 exe 同样支持外部编辑预设文件
           files: TranslationChecker-windows.zip
