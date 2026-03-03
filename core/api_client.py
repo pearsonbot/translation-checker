@@ -1,5 +1,11 @@
-"""LLM API 客户端，使用 requests 直接调用 OpenAI 兼容接口。"""
+"""LLM API 客户端，使用 requests 直接调用 OpenAI 兼容接口。
 
+服务商预设从外部文件 presets/providers.json 加载，支持程序外编辑。
+若外部文件不存在或解析失败，则使用代码内的默认值兜底。
+"""
+
+import os
+import sys
 import json
 import time
 import logging
@@ -8,33 +14,60 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# 预置服务商配置
-PRESET_PROVIDERS = {
-    "OpenAI": {
-        "base_url": "https://api.openai.com/v1",
-        "default_model": "gpt-4o",
-    },
-    "DeepSeek": {
-        "base_url": "https://api.deepseek.com/v1",
-        "default_model": "deepseek-chat",
-    },
-    "通义千问": {
-        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "default_model": "qwen-plus",
-    },
-    "Moonshot (Kimi)": {
-        "base_url": "https://api.moonshot.cn/v1",
-        "default_model": "moonshot-v1-8k",
-    },
-    "智谱 (GLM)": {
-        "base_url": "https://open.bigmodel.cn/api/paas/v4",
-        "default_model": "glm-4",
-    },
+# 代码内兜底默认值：只保留自定义
+_DEFAULT_PRESET_PROVIDERS = {
     "自定义": {
         "base_url": "",
         "default_model": "",
     },
 }
+
+
+def _find_presets_dir():
+    """查找 presets 目录，兼容打包后和源码运行。"""
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "presets")
+
+
+def _load_providers_from_file():
+    """从 presets/providers.json 加载服务商预设。
+
+    Returns:
+        dict or None: 成功时返回服务商字典，失败返回 None
+    """
+    presets_dir = _find_presets_dir()
+    filepath = os.path.join(presets_dir, "providers.json")
+
+    if not os.path.exists(filepath):
+        logger.info(f"预设服务商文件不存在: {filepath}，使用代码内默认值")
+        return None
+
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            providers = json.load(f)
+        # 确保「自定义」始终存在
+        if "自定义" not in providers:
+            providers["自定义"] = {"base_url": "", "default_model": ""}
+        logger.info(f"已从外部文件加载 {len(providers)} 个服务商预设: {filepath}")
+        return providers
+    except Exception as e:
+        logger.warning(f"加载预设服务商文件失败: {e}，使用代码内默认值")
+        return None
+
+
+def reload_providers():
+    """重新从外部文件加载服务商预设（供运行时刷新用）。"""
+    global PRESET_PROVIDERS
+    loaded = _load_providers_from_file()
+    if loaded:
+        PRESET_PROVIDERS = loaded
+
+
+# ── 初始化：优先从外部文件加载 ──
+PRESET_PROVIDERS = _load_providers_from_file() or _DEFAULT_PRESET_PROVIDERS
 
 
 class LLMClient:
