@@ -36,6 +36,7 @@ DEFAULT_CONFIG = {
     "batch_mode": False,
     "batch_size": 5,
     "custom_prompts": {},
+    "custom_providers": {},
 }
 
 
@@ -67,6 +68,10 @@ def main():
     logger.info(f"程序启动，基础目录: {BASE_DIR}")
 
     config = load_config()
+
+    # 将用户自定义服务商合并到全局预设
+    from core.api_client import _merge_custom_providers
+    _merge_custom_providers(config.get("custom_providers", {}))
 
     from gui.app import MainApp
 

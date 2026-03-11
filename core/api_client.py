@@ -58,12 +58,28 @@ def _load_providers_from_file():
         return None
 
 
-def reload_providers():
-    """重新从外部文件加载服务商预设（供运行时刷新用）。"""
+def reload_providers(custom_providers=None):
+    """重新加载服务商预设，合并外部文件和用户自定义服务商。
+
+    Args:
+        custom_providers: 用户在 UI 中添加的自定义服务商字典，来自 config.json
+    """
     global PRESET_PROVIDERS
-    loaded = _load_providers_from_file()
-    if loaded:
-        PRESET_PROVIDERS = loaded
+    loaded = _load_providers_from_file() or dict(_DEFAULT_PRESET_PROVIDERS)
+    if custom_providers:
+        for name, info in custom_providers.items():
+            if name not in loaded:
+                loaded[name] = info
+    PRESET_PROVIDERS = loaded
+
+
+def _merge_custom_providers(custom_providers):
+    """将自定义服务商合并到全局预设中。"""
+    global PRESET_PROVIDERS
+    if custom_providers:
+        for name, info in custom_providers.items():
+            if name not in PRESET_PROVIDERS:
+                PRESET_PROVIDERS[name] = info
 
 
 # ── 初始化：优先从外部文件加载 ──

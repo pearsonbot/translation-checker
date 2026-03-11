@@ -3,8 +3,54 @@
 import json
 import threading
 import customtkinter as ctk
-from core.api_client import PRESET_PROVIDERS, LLMClient
+from core.api_client import PRESET_PROVIDERS, LLMClient, _merge_custom_providers
 from core.prompts import BUILTIN_PROMPTS
+
+
+class _AddProviderDialog(ctk.CTkToplevel):
+    """添加服务商的弹出对话框。"""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("添加服务商")
+        self.geometry("420x220")
+        self.resizable(False, False)
+        self.grab_set()
+        self.result = None
+
+        ctk.CTkLabel(self, text="名称:").grid(row=0, column=0, sticky="w", padx=10, pady=(15, 5))
+        self.name_var = ctk.StringVar()
+        ctk.CTkEntry(self, textvariable=self.name_var, width=280).grid(
+            row=0, column=1, sticky="ew", padx=10, pady=(15, 5))
+
+        ctk.CTkLabel(self, text="Base URL:").grid(row=1, column=0, sticky="w", padx=10, pady=5)
+        self.url_var = ctk.StringVar()
+        ctk.CTkEntry(self, textvariable=self.url_var, width=280).grid(
+            row=1, column=1, sticky="ew", padx=10, pady=5)
+
+        ctk.CTkLabel(self, text="默认模型:").grid(row=2, column=0, sticky="w", padx=10, pady=5)
+        self.model_var = ctk.StringVar()
+        ctk.CTkEntry(self, textvariable=self.model_var, width=280).grid(
+            row=2, column=1, sticky="ew", padx=10, pady=5)
+
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=15)
+        ctk.CTkButton(btn_frame, text="确定", width=80, command=self._ok).pack(side="left", padx=5)
+        ctk.CTkButton(btn_frame, text="取消", width=80, fg_color="gray",
+                       command=self.destroy).pack(side="left", padx=5)
+
+        self.grid_columnconfigure(1, weight=1)
+
+    def _ok(self):
+        name = self.name_var.get().strip()
+        if not name:
+            return
+        if name in PRESET_PROVIDERS:
+            from tkinter import messagebox
+            messagebox.showwarning("重复", f"服务商「{name}」已存在。")
+            return
+        self.result = (name, self.url_var.get().strip(), self.model_var.get().strip())
+        self.destroy()
 
 
 class SettingsDialog(ctk.CTkToplevel):
@@ -21,6 +67,9 @@ class SettingsDialog(ctk.CTkToplevel):
         self.config = config
         self.config_path = config_path
         self.result = None  # 保存后返回给主窗口
+
+        # 合并用户自定义服务商到全局预设
+        _merge_custom_providers(self.config.get("custom_providers", {}))
 
         # 选项卡
         self.tabview = ctk.CTkTabview(self)
@@ -44,15 +93,26 @@ class SettingsDialog(ctk.CTkToplevel):
     # ── API 配置 ──
 
     def _build_api_tab(self, tab):
-        # 服务商选择
+        # 服务商选择 + 增删按钮
         ctk.CTkLabel(tab, text="服务商:").grid(row=0, column=0, sticky="w", pady=5, padx=5)
+        provider_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        provider_frame.grid(row=0, column=1, sticky="ew", pady=5, padx=5)
+
         self.provider_var = ctk.StringVar(value=self.config.get("provider", "自定义"))
-        provider_menu = ctk.CTkOptionMenu(
-            tab, variable=self.provider_var,
+        self.provider_menu = ctk.CTkOptionMenu(
+            provider_frame, variable=self.provider_var,
             values=list(PRESET_PROVIDERS.keys()),
             command=self._on_provider_change,
         )
-        provider_menu.grid(row=0, column=1, sticky="ew", pady=5, padx=5)
+        self.provider_menu.pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(
+            provider_frame, text="+", width=30,
+            command=self._add_provider,
+        ).pack(side="left", padx=(5, 0))
+        ctk.CTkButton(
+            provider_frame, text="-", width=30, fg_color="#e74c3c",
+            command=self._delete_provider,
+        ).pack(side="left", padx=(3, 0))
 
         # Base URL
         ctk.CTkLabel(tab, text="Base URL:").grid(row=1, column=0, sticky="w", pady=5, padx=5)
@@ -153,6 +213,39 @@ class SettingsDialog(ctk.CTkToplevel):
             self.base_url_var.set(preset["base_url"])
         if preset.get("default_model"):
             self.model_var.set(preset["default_model"])
+
+    def _refresh_provider_menu(self):
+        """刷新服务商下拉列表。"""
+        self.provider_menu.configure(values=list(PRESET_PROVIDERS.keys()))
+
+    def _add_provider(self):
+        """弹出对话框添加新服务商。"""
+        dialog = _AddProviderDialog(self)
+        self.wait_window(dialog)
+        if dialog.result:
+            name, base_url, model = dialog.result
+            PRESET_PROVIDERS[name] = {
+                "base_url": base_url,
+                "default_model": model,
+            }
+            self._refresh_provider_menu()
+            self.provider_var.set(name)
+            self._on_provider_change(name)
+
+    def _delete_provider(self):
+        """删除当前选中的服务商（内置「自定义」不可删除）。"""
+        name = self.provider_var.get()
+        if name == "自定义":
+            from tkinter import messagebox
+            messagebox.showinfo("提示", "「自定义」为内置服务商，不可删除。")
+            return
+        from tkinter import messagebox
+        if not messagebox.askyesno("确认删除", f"确定要删除服务商「{name}」吗？"):
+            return
+        PRESET_PROVIDERS.pop(name, None)
+        self._refresh_provider_menu()
+        self.provider_var.set("自定义")
+        self._on_provider_change("自定义")
 
     def _test_connection(self):
         self.test_label.configure(text="正在测试...", text_color="gray")
@@ -332,6 +425,15 @@ class SettingsDialog(ctk.CTkToplevel):
             self.config["batch_size"] = max(2, min(20, int(self.batch_size_var.get())))
         except ValueError:
             self.config["batch_size"] = 5
+
+        # 保存用户添加的自定义服务商（排除 presets/providers.json 中的预设）
+        from core.api_client import _load_providers_from_file, _DEFAULT_PRESET_PROVIDERS
+        file_providers = _load_providers_from_file() or _DEFAULT_PRESET_PROVIDERS
+        custom_providers = {}
+        for name, info in PRESET_PROVIDERS.items():
+            if name not in file_providers:
+                custom_providers[name] = info
+        self.config["custom_providers"] = custom_providers
 
         # 保存自定义提示词 (包含对内置提示词的修改)
         custom_prompts = {}
