@@ -428,7 +428,7 @@ class SettingsDialog(ctk.CTkToplevel):
 
         # 保存用户添加的自定义服务商（排除 presets/providers.json 中的预设）
         from core.api_client import _load_providers_from_file, _DEFAULT_PRESET_PROVIDERS
-        file_providers = _load_providers_from_file() or _DEFAULT_PRESET_PROVIDERS
+        file_providers = _load_providers_from_file() or dict(_DEFAULT_PRESET_PROVIDERS)
         custom_providers = {}
         for name, info in PRESET_PROVIDERS.items():
             if name not in file_providers:

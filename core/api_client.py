@@ -83,7 +83,7 @@ def _merge_custom_providers(custom_providers):
 
 
 # ── 初始化：优先从外部文件加载 ──
-PRESET_PROVIDERS = _load_providers_from_file() or _DEFAULT_PRESET_PROVIDERS
+PRESET_PROVIDERS = _load_providers_from_file() or dict(_DEFAULT_PRESET_PROVIDERS)
 
 
 class LLMClient:
