@@ -51,9 +51,12 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.6.0
-          name: "v1.6.0 - 服务商增删 / 拼写检查模板 / 预设配置外置"
+          tag_name: v1.7.0
+          name: "v1.7.0 - Bug修复 / 服务商增删 / 拼写检查模板 / 预设配置外置"
           body: |
+            ## Bug 修复
+            - **修复多条自定义服务商重启后丢失**：修复了 `PRESET_PROVIDERS` 与 `_DEFAULT_PRESET_PROVIDERS` 引用共享导致自定义服务商无法正确保存到 `config.json` 的问题
+
             ## 新功能
             - **服务商增删管理**：设置 → API 配置中，服务商下拉菜单旁新增「+」「-」按钮
               - 点击「+」弹出对话框，填写名称、Base URL、默认模型即可添加新服务商
