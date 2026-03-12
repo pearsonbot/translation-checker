@@ -3,8 +3,54 @@
 import json
 import threading
 import customtkinter as ctk
-from core.api_client import PRESET_PROVIDERS, LLMClient
+from core.api_client import PRESET_PROVIDERS, LLMClient, _merge_custom_providers
 from core.prompts import BUILTIN_PROMPTS
+
+
+class _AddProviderDialog(ctk.CTkToplevel):
+    """添加服务商的弹出对话框。"""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("添加服务商")
+        self.geometry("420x220")
+        self.resizable(False, False)
+        self.grab_set()
+        self.result = None
+
+        ctk.CTkLabel(self, text="名称:").grid(row=0, column=0, sticky="w", padx=10, pady=(15, 5))
+        self.name_var = ctk.StringVar()
+        ctk.CTkEntry(self, textvariable=self.name_var, width=280).grid(
+            row=0, column=1, sticky="ew", padx=10, pady=(15, 5))
+
+        ctk.CTkLabel(self, text="Base URL:").grid(row=1, column=0, sticky="w", padx=10, pady=5)
+        self.url_var = ctk.StringVar()
+        ctk.CTkEntry(self, textvariable=self.url_var, width=280).grid(
+            row=1, column=1, sticky="ew", padx=10, pady=5)
+
+        ctk.CTkLabel(self, text="默认模型:").grid(row=2, column=0, sticky="w", padx=10, pady=5)
+        self.model_var = ctk.StringVar()
+        ctk.CTkEntry(self, textvariable=self.model_var, width=280).grid(
+            row=2, column=1, sticky="ew", padx=10, pady=5)
+
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=15)
+        ctk.CTkButton(btn_frame, text="确定", width=80, command=self._ok).pack(side="left", padx=5)
+        ctk.CTkButton(btn_frame, text="取消", width=80, fg_color="gray",
+                       command=self.destroy).pack(side="left", padx=5)
+
+        self.grid_columnconfigure(1, weight=1)
+
+    def _ok(self):
+        name = self.name_var.get().strip()
+        if not name:
+            return
+        if name in PRESET_PROVIDERS:
+            from tkinter import messagebox
+            messagebox.showwarning("重复", f"服务商「{name}」已存在。")
+            return
+        self.result = (name, self.url_var.get().strip(), self.model_var.get().strip())
+        self.destroy()
 
 
 class SettingsDialog(ctk.CTkToplevel):
@@ -14,13 +60,16 @@ class SettingsDialog(ctk.CTkToplevel):
         super().__init__(parent)
 
         self.title("设置")
-        self.geometry("650x580")
+        self.geometry("650x680")
         self.resizable(False, False)
         self.grab_set()
 
         self.config = config
         self.config_path = config_path
         self.result = None  # 保存后返回给主窗口
+
+        # 合并用户自定义服务商到全局预设
+        _merge_custom_providers(self.config.get("custom_providers", {}))
 
         # 选项卡
         self.tabview = ctk.CTkTabview(self)
@@ -44,15 +93,26 @@ class SettingsDialog(ctk.CTkToplevel):
     # ── API 配置 ──
 
     def _build_api_tab(self, tab):
-        # 服务商选择
+        # 服务商选择 + 增删按钮
         ctk.CTkLabel(tab, text="服务商:").grid(row=0, column=0, sticky="w", pady=5, padx=5)
+        provider_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        provider_frame.grid(row=0, column=1, sticky="ew", pady=5, padx=5)
+
         self.provider_var = ctk.StringVar(value=self.config.get("provider", "自定义"))
-        provider_menu = ctk.CTkOptionMenu(
-            tab, variable=self.provider_var,
+        self.provider_menu = ctk.CTkOptionMenu(
+            provider_frame, variable=self.provider_var,
             values=list(PRESET_PROVIDERS.keys()),
             command=self._on_provider_change,
         )
-        provider_menu.grid(row=0, column=1, sticky="ew", pady=5, padx=5)
+        self.provider_menu.pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(
+            provider_frame, text="+", width=30,
+            command=self._add_provider,
+        ).pack(side="left", padx=(5, 0))
+        ctk.CTkButton(
+            provider_frame, text="-", width=30, fg_color="#e74c3c",
+            command=self._delete_provider,
+        ).pack(side="left", padx=(3, 0))
 
         # Base URL
         ctk.CTkLabel(tab, text="Base URL:").grid(row=1, column=0, sticky="w", pady=5, padx=5)
@@ -75,14 +135,77 @@ class SettingsDialog(ctk.CTkToplevel):
             row=3, column=1, sticky="ew", pady=5, padx=5
         )
 
+        # 请求间隔
+        ctk.CTkLabel(tab, text="请求间隔(秒):").grid(row=4, column=0, sticky="w", pady=5, padx=5)
+        interval_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        interval_frame.grid(row=4, column=1, sticky="w", pady=5, padx=5)
+        self.interval_var = ctk.StringVar(
+            value=str(self.config.get("request_interval", 1.0))
+        )
+        ctk.CTkEntry(interval_frame, textvariable=self.interval_var, width=80).pack(
+            side="left"
+        )
+        ctk.CTkLabel(
+            interval_frame, text="  每次API调用后等待的秒数，防止触发频率限制",
+            text_color="gray",
+        ).pack(side="left")
+
+        # 高级选项分隔
+        separator = ctk.CTkLabel(tab, text="── 高级选项 ──", text_color="gray")
+        separator.grid(row=5, column=0, columnspan=2, pady=(15, 5), padx=5)
+
+        # 批量模式开关
+        ctk.CTkLabel(tab, text="批量模式:").grid(row=6, column=0, sticky="w", pady=5, padx=5)
+        batch_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        batch_frame.grid(row=6, column=1, sticky="w", pady=5, padx=5)
+
+        self.batch_mode_var = ctk.BooleanVar(
+            value=self.config.get("batch_mode", False)
+        )
+        ctk.CTkSwitch(
+            batch_frame, text="", variable=self.batch_mode_var,
+            width=40, command=self._on_batch_toggle,
+        ).pack(side="left")
+        ctk.CTkLabel(
+            batch_frame,
+            text="  一次发送多行给模型（减少API调用次数，可能影响评分精度）",
+            text_color="gray",
+        ).pack(side="left")
+
+        # 每批行数
+        ctk.CTkLabel(tab, text="每批行数:").grid(row=7, column=0, sticky="w", pady=5, padx=5)
+        batch_size_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        batch_size_frame.grid(row=7, column=1, sticky="w", pady=5, padx=5)
+        self.batch_size_var = ctk.StringVar(
+            value=str(self.config.get("batch_size", 5))
+        )
+        self.batch_size_entry = ctk.CTkEntry(
+            batch_size_frame, textvariable=self.batch_size_var, width=80,
+        )
+        self.batch_size_entry.pack(side="left")
+        ctk.CTkLabel(
+            batch_size_frame, text="  建议 3~10，过大可能导致结果不完整",
+            text_color="gray",
+        ).pack(side="left")
+
+        # 根据当前 batch_mode 状态设置 entry 可用性
+        if not self.batch_mode_var.get():
+            self.batch_size_entry.configure(state="disabled")
+
         # 测试连接按钮
         self.test_btn = ctk.CTkButton(tab, text="测试连接", command=self._test_connection)
-        self.test_btn.grid(row=4, column=1, sticky="w", pady=10, padx=5)
+        self.test_btn.grid(row=8, column=1, sticky="w", pady=10, padx=5)
 
         self.test_label = ctk.CTkLabel(tab, text="", text_color="gray")
-        self.test_label.grid(row=5, column=0, columnspan=2, sticky="w", padx=5)
+        self.test_label.grid(row=9, column=0, columnspan=2, sticky="w", padx=5)
 
         tab.grid_columnconfigure(1, weight=1)
+
+    def _on_batch_toggle(self):
+        if self.batch_mode_var.get():
+            self.batch_size_entry.configure(state="normal")
+        else:
+            self.batch_size_entry.configure(state="disabled")
 
     def _on_provider_change(self, provider_name):
         preset = PRESET_PROVIDERS.get(provider_name, {})
@@ -90,6 +213,39 @@ class SettingsDialog(ctk.CTkToplevel):
             self.base_url_var.set(preset["base_url"])
         if preset.get("default_model"):
             self.model_var.set(preset["default_model"])
+
+    def _refresh_provider_menu(self):
+        """刷新服务商下拉列表。"""
+        self.provider_menu.configure(values=list(PRESET_PROVIDERS.keys()))
+
+    def _add_provider(self):
+        """弹出对话框添加新服务商。"""
+        dialog = _AddProviderDialog(self)
+        self.wait_window(dialog)
+        if dialog.result:
+            name, base_url, model = dialog.result
+            PRESET_PROVIDERS[name] = {
+                "base_url": base_url,
+                "default_model": model,
+            }
+            self._refresh_provider_menu()
+            self.provider_var.set(name)
+            self._on_provider_change(name)
+
+    def _delete_provider(self):
+        """删除当前选中的服务商（内置「自定义」不可删除）。"""
+        name = self.provider_var.get()
+        if name == "自定义":
+            from tkinter import messagebox
+            messagebox.showinfo("提示", "「自定义」为内置服务商，不可删除。")
+            return
+        from tkinter import messagebox
+        if not messagebox.askyesno("确认删除", f"确定要删除服务商「{name}」吗？"):
+            return
+        PRESET_PROVIDERS.pop(name, None)
+        self._refresh_provider_menu()
+        self.provider_var.set("自定义")
+        self._on_provider_change("自定义")
 
     def _test_connection(self):
         self.test_label.configure(text="正在测试...", text_color="gray")
@@ -259,6 +415,25 @@ class SettingsDialog(ctk.CTkToplevel):
         self.config["base_url"] = self.base_url_var.get()
         self.config["api_key"] = self.api_key_var.get()
         self.config["model"] = self.model_var.get()
+        try:
+            self.config["request_interval"] = max(0, float(self.interval_var.get()))
+        except ValueError:
+            self.config["request_interval"] = 1.0
+
+        self.config["batch_mode"] = self.batch_mode_var.get()
+        try:
+            self.config["batch_size"] = max(2, min(20, int(self.batch_size_var.get())))
+        except ValueError:
+            self.config["batch_size"] = 5
+
+        # 保存用户添加的自定义服务商（排除 presets/providers.json 中的预设）
+        from core.api_client import _load_providers_from_file, _DEFAULT_PRESET_PROVIDERS
+        file_providers = _load_providers_from_file() or dict(_DEFAULT_PRESET_PROVIDERS)
+        custom_providers = {}
+        for name, info in PRESET_PROVIDERS.items():
+            if name not in file_providers:
+                custom_providers[name] = info
+        self.config["custom_providers"] = custom_providers
 
         # 保存自定义提示词 (包含对内置提示词的修改)
         custom_prompts = {}
